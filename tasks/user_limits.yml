@@ -1,0 +1,9 @@
+---
+
+- name: Disable core dumps /etc/security/limits.conf
+  become: yes
+  lineinfile:
+    dest: /etc/security/limits.conf
+    insertbefore: '# End of file'
+    line: '*                hard    core            0'
+    state: present

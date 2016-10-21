@@ -1,0 +1,9 @@
+---
+
+- name: Ensure SSH daemon configuration
+  become: yes
+  template:
+    src: ssh/sshd_conf.j2
+    dest: /etc/ssh/sshd_config
+    mode: 0644
+    owner: root

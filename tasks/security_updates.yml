@@ -1,0 +1,11 @@
+---
+
+- name: Ensures latest Security updates are installed
+  become: yes
+  shell: "{{ item }}"
+  with_items:
+    - echo "# Running security udpate (`date`)" >> /var/log/apt-security-updates
+    - aptitude update >> /var/log/apt-security-updates
+    - echo "\n# Installing updates" >> /var/log/apt-security-updates
+    - DEBIAN_FRONTEND=noninteractive aptitude safe-upgrade -o Aptitude::Delete-Unused=false --assume-yes --target-release `lsb_release -cs`-security >> /var/log/apt-security-updates
+    - echo "Security updates (if any) installed\n\n\n\n" >> /var/log/apt-security-updates

@@ -1,0 +1,7 @@
+---
+
+- name: Remove world permissions from grub.cfg
+  become: yes
+  file:
+    path: /boot/grub/grub.cfg
+    mode: 0400

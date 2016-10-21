@@ -1,0 +1,15 @@
+---
+
+dependencies: [ ]
+
+galaxy_info:
+  author: David Reed
+  description: Security hardening installation
+  license: MIT
+  min_ansible_version: 1.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - trusty
+  categories:
+    - development

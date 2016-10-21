@@ -1,0 +1,8 @@
+---
+
+- name: Update /home/ubuntu directory permissions
+  become: yes
+  file:
+    path: /home/ubuntu
+    state: directory
+    mode: 0750
