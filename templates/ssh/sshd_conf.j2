@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+Port 22
+Protocol 2
+SyslogFacility AUTHPRIV
+LogLevel INFO
+{# Ping client 5 times with a minute interval before disconnecting #}
+ClientAliveInterval 60
+ClientAliveCountMax 5
+LoginGraceTime 30s
+PermitRootLogin no
+MaxAuthTries 3
+RSAAuthentication yes
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PermitEmptyPasswords no
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+GSSAPIAuthentication no
+GSSAPICleanupCredentials no
+UsePAM yes
+{# Required for sftp to work #}
+Subsystem sftp /usr/lib/openssh/sftp-server
+AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES
+AcceptEnv LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT
+AcceptEnv LC_IDENTIFICATION LC_ALL
+X11Forwarding no
+UseDNS no

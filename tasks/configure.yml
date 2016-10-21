@@ -1,0 +1,5 @@
+---
+
+- name: Ansible 1.9 tag fix
+  command: echo "noop"
+

@@ -1,0 +1,25 @@
+---
+
+- name: Configure SSH
+  include: ssh.yml
+
+- name: Security Updates
+  include: security_updates.yml
+
+- name: Sysctl updates
+  include: sysctl.yml
+
+- name: Configure Root Access
+  include: root_access.yml
+
+- name: Update ubuntu home dir permissions
+  include: ubuntu_dir.yml
+
+- name: Set file permissions on grub config
+  include: grub.yml
+
+- name: Configure cron
+  include: cron.yml
+
+- name: Set user limits
+  include: user_limits.yml

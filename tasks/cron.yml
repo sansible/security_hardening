@@ -1,0 +1,19 @@
+---
+
+- name: Allow only root to run 'cron' and 'at'
+  become: yes
+  copy:
+    content: root
+    dest: "{{ item }}"
+    mode: 0644
+  with_items:
+    - /etc/cron.allow
+    - /etc/at.allow
+
+- name: Allow only root to access /etc/crontab
+  become: yes
+  file:
+    path: /etc/crontab
+    owner: root
+    group: root
+    mode: 0600

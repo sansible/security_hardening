@@ -1,0 +1,17 @@
+---
+
+- name: Disable root login
+  become: yes
+  lineinfile:
+    dest: /etc/passwd
+    regexp: "^root:(.*):.*$"
+    backrefs: yes
+    line: root:\1:/usr/sbin/nologin
+    state: present
+
+- name: Allow root login only on 'console'
+  become: yes
+  template:
+    src: root_access/securetty.j2
+    dest: /etc/securetty
+    mode: 0644
