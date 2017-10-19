@@ -20,6 +20,7 @@ before_install:
   - sudo apt-get update -qq
   - sudo /etc/init.d/postgresql stop
   - sudo apt-get purge -y "postgresql-*"
+  - sudo apt-get purge -y "mongodb-*"
 
 install:
   # Install Ansible.
