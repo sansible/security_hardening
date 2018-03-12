@@ -11,10 +11,11 @@ language: python
 python: "2.7"
 
 env:
-  - ANSIBLE_INSTALL_VERSION=1.9.4
   - ANSIBLE_INSTALL_VERSION=2.0.2.0
-  - ANSIBLE_INSTALL_VERSION=2.1.1.0
-  
+  - ANSIBLE_INSTALL_VERSION=2.1.5.0
+  - ANSIBLE_INSTALL_VERSION=2.2.2.0
+  - ANSIBLE_INSTALL_VERSION=2.3.0.0
+
 before_install:
   # Make sure everything's up to date.
   - sudo apt-get update -qq
@@ -28,13 +29,11 @@ install:
 
 script:
   # Install Role Dependencies
-  - make test_deps lint
-  # First run
-  - cd tests/
-  # Test the "build" stage
-  - ansible-playbook -i inventory test.yml --tags=build --connection=local
-  # Test the "configure" stage
-  - ansible-playbook -i inventory test.yml --tags=configure --connection=local
-    
+  - make test_deps
+  # Lint
+  - make lint
+  # Test Ansible role
+  - make test_ansible
+
 notifications:
   webhooks: https://galaxy.ansible.com/api/v1/notifications/
