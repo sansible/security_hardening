@@ -1,11 +1,66 @@
 ---
 
-- name: Ensures latest Security updates are installed
+- name: Install aptitude
   become: yes
-  shell: "{{ item }}"
-  with_items:
-    - echo "# Running security udpate (`date`)" >> /var/log/apt-security-updates
-    - apt-get update >> /var/log/apt-security-updates
-    - echo "\n# Installing updates" >> /var/log/apt-security-updates
-    - DEBIAN_FRONTEND=noninteractive apt-get upgrade -o Aptitude::Delete-Unused=false --assume-yes --target-release `lsb_release -cs`-security >> /var/log/apt-security-updates
-    - echo "Security updates (if any) installed\n\n\n\n" >> /var/log/apt-security-updates
+  apt:
+    cache_valid_time: 3600
+    name: aptitude
+
+- name: Log Update Start
+  become: yes
+  lineinfile:
+    create: yes
+    insertafter: EOF
+    line: "# Starting Security Update {{ ansible_date_time.iso8601 }}"
+    name: /var/log/apt-security-updates
+
+- name: Perform Update
+  become: yes
+  apt:
+    cache_valid_time: 3600
+    default_release: "{{ ansible_distribution_release }}-security"
+    upgrade: yes
+  register: apt_upgrade
+
+- name: Log Update Details
+  become: yes
+  lineinfile:
+    create: yes
+    insertafter: EOF
+    line: "{{ apt_upgrade.stdout }}"
+    name: /var/log/apt-security-updates
+
+- name: Log Update End
+  become: yes
+  lineinfile:
+    create: yes
+    insertafter: EOF
+    line: "# Finished Security Update {{ ansible_date_time.iso8601 }}"
+    name: /var/log/apt-security-updates
+
+- block:
+    - name: Reboot System
+      become: yes
+      command: reboot
+      changed_when: no
+      when: "ansible_virtualization_type != 'docker'"
+
+    - name: Wait For System to Come Up
+      pause:
+        minutes: 2
+      when: "ansible_virtualization_type != 'docker'"
+
+    - name: Copy linux-purge
+      become: yes
+      copy:
+        src: linux-purge
+        dest: /usr/bin/linux-purge
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Purge Old Kernels
+      become: yes
+      command: /usr/bin/linux-purge -k 0 -y
+      changed_when: no
+  when: sansible_security_hardening_purge_old_kernels

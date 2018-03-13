@@ -1,0 +1,49 @@
+---
+
+driver:
+  name: docker
+
+platforms:
+  - name: security_hardening-trusty
+    image: ubuntu:trusty
+  - name: security_hardening-xenial
+    image: ubuntu:xenial
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      hash_behaviour: merge
+  lint:
+    name: ansible-lint
+
+lint:
+  name: yamllint
+  options:
+    config-data:
+      extends: default
+      ignore: .venv_ansible*
+      rules:
+        line-length:
+          max: 159
+        truthy: disable
+
+dependency:
+  name: galaxy
+
+scenario:
+  name: default
+  test_sequence:
+    - lint
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - side_effect
+    - verify
+
+verifier:
+  name: testinfra
+  lint:
+    name: flake8

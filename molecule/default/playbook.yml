@@ -1,0 +1,26 @@
+---
+
+- name: Converge
+  hosts: all
+
+  pre_tasks:
+    - name: Create Required Directories
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - /boot/grub/
+        - /etc/ssh/
+
+    - name: Create Required Files
+      copy:
+        content: Testing
+        dest: "{{ item }}"
+        force: no
+      with_items:
+        - /boot/grub/grub.cfg
+        - /etc/crontab
+
+  roles:
+    - role: security_hardening
+      sansible_security_hardening_purge_old_kernels: yes
