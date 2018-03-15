@@ -1,7 +1,0 @@
----
-
-- name: Test Security Hardening role
-  hosts: all
-
-  roles:
-    - role: sansible.security_hardening

@@ -8,57 +8,40 @@ Develop: [![Build Status](https://travis-ci.org/sansible/security_hardening.svg?
 * [Tags](#tags)
 * [Examples](#examples)
 
-This roles installs the Security Hardening fixes to make Ubuntu less vulnerable.
+This roles installs the Security Hardening fixes to make Ubuntu less
+vulnerable.
 
 Included fixes:
 
-* Installs latest security updates via apt
+* Installs latest security updates via aptitude
 * SSH root disable and key access only
 * Disable ping
 * Restrict crons to root only
 * Disable core dumps
+* Purges old kernels (optional)
 
-**Note** this role installs security hardening updates on each run and this therefore 
-not idempotent.
-
-
-
-
-## ansible.cfg
-
-This role is designed to work with merge "hash_behaviour". Make sure your
-ansible.cfg contains these settings
-
-```INI
-[defaults]
-hash_behaviour = merge
-```
-
-
+**Note** this role installs security hardening updates on each run and is
+therefore not idempotent.
 
 
 ## Installation and Dependencies
 
-To install run `ansible-galaxy install sansible.security_hardening` or add this to your
-`roles.yml`.
+To install run `ansible-galaxy install sansible.security_hardening` or add this
+to your `roles.yml`.
 
 ```YAML
 - name: sansible.security_hardening
-  version: v1.0
+  version: v2.0
 ```
 
 and run `ansible-galaxy install -p ./roles -r roles.yml`
-
-
 
 
 ## Tags
 
 This role uses one tag: **build** 
 
-* `build` - Installs Security Hardening and all it's dependencies.
-
-
+* `build` - Installs Security Hardening and all its dependencies.
 
 
 ## Examples
@@ -71,4 +54,5 @@ To install:
 
   roles:
     - role: sansible.security_hardening
+      sansible_security_hardening_purge_old_kernels: yes
 ```

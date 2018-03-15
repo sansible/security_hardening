@@ -1,1 +1,3 @@
 ---
+
+sansible_security_hardening_purge_old_kernels: no

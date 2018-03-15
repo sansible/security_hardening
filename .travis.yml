@@ -2,39 +2,34 @@
 
 group: stable
 dist: trusty
+sudo: required
+
+language: python
+python:
+  - 2.7
+
 branches:
   only:
     - develop
     - master
 
-language: python
-python: "2.7"
-
 env:
-  - ANSIBLE_INSTALL_VERSION=1.9.4
-  - ANSIBLE_INSTALL_VERSION=2.0.2.0
-  - ANSIBLE_INSTALL_VERSION=2.1.1.0
-  
+  - ANSIBLE_INSTALL_VERSION=2.2.3.0
+  - ANSIBLE_INSTALL_VERSION=2.3.3.0
+  - ANSIBLE_INSTALL_VERSION=2.4.3.0
+
+services:
+  - docker
+
 before_install:
-  # Make sure everything's up to date.
   - sudo apt-get update -qq
-  - sudo /etc/init.d/postgresql stop
-  - sudo apt-get purge -y "postgresql-*"
-  - sudo apt-get purge -y "mongodb-*"
+  - sudo apt-get install -o Dpkg::Options::="--force-confold" --force-yes -y docker-ce
 
 install:
-  # Install Ansible.
-  - pip install ansible==${ANSIBLE_INSTALL_VERSION} ansible-lint
+  - make deps
 
 script:
-  # Install Role Dependencies
-  - make test_deps lint
-  # First run
-  - cd tests/
-  # Test the "build" stage
-  - ansible-playbook -i inventory test.yml --tags=build --connection=local
-  # Test the "configure" stage
-  - ansible-playbook -i inventory test.yml --tags=configure --connection=local
-    
+  - make test
+
 notifications:
   webhooks: https://galaxy.ansible.com/api/v1/notifications/

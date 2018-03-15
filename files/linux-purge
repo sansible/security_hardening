@@ -1,0 +1,870 @@
+#!/bin/bash
+#
+#  linux-purge - Linux kernel purging tool for Ubuntu Linux
+#
+#  Notable dependencies: apt, util-linux, whiptail.
+#  Will use dialog, if available, for interactive kernel selection, if
+#  whiptail is not explicitly requested by command line option.
+#
+#  Editing: Use tabulator width 4 for indentation.
+#
+#  Copyright (C) 2017 Jarno Ilari Suni <8@iki.fi>
+#
+#    Author: Jarno Ilari Suni <8@iki.fi>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, version 3 of the License.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+set -u -e
+export LC_ALL=C # Use C locale to get standard sorting and better regex
+# performance.
+
+readonly program_name='linux-purge' \
+program_full_name='Linux Purge for Ubuntu' \
+program_version='1.0' \
+MB=1000000 \
+width=60
+readonly w_error='Terminal screen not wide enough. Minimum is '$width' columns.' \
+h_error='Not enough lines in terminal screen.' \
+lockfile='/var/lib/dpkg/lock' \
+current=$(uname -r) \
+boot=$(stat  --format="%m" /boot) # = mount point under which /boot is found
+readonly cs=';' # column separator used for dialog command. Will be displayed
+# as is with whiptail command. It should not contain space.
+
+# Default values for command line options:
+keep= # explicit keep option not detected
+auto_only= # Do not restrict purging to automatically installed packages.
+clear_boot= # Do not clear system from files unknown to dpkg.
+choose= # Do not let user choose kernels to purge interactively.
+debug= # not debug mode
+debug_file=
+fix= # do not fix
+simulate= # no simulation
+yes= # interactive mode
+manual= # do not mark manually installed for purge
+legend=1 # display legend in checklist by default
+optimize= # Do not optimize by default
+unknown_current= # Will be set non-null, if current kernel is unknown to dpkg
+error_called=
+interface=d
+
+# update-grub control variables
+update_grub_disabled=
+update_grub=
+
+# Make sure certain variables are not set.
+unset -v LatestReleases ManualReleases HoldReleases
+
+error() {
+	printf '[%s] ERROR: %s\n' "$program_name" "$1" | fold -s >&2
+	error_called=1
+	exit ${2:-1}
+}
+
+warn() {
+	printf '[%s] WARNING: %s\n' "$program_name" "$1" | fold -s >&2
+}
+
+note() {
+	printf '[%s] NOTE: %s\n' "$program_name" "$1" | fold -s
+}
+
+restore_update_grub() {
+	if [[ $update_grub_disabled ]]; then
+		chmod +x "$update_grub"
+		note "Made '$update_grub' executable again."
+		update_grub_disabled=
+	fi
+}
+
+finnish() {
+	err=$?
+	[[ $error_called ]] && err=0
+	restore_update_grub
+	[[ $debug_file ]] && note "The debug information is saved in
+${debug_file}"
+	[[ $err -eq 0 ]] || error "Aborting due to an unknown error ($err)." 3
+}
+
+# NOTE: in case of power cut this will not be done and update-grub may
+# be left non-executable!
+trap finnish EXIT
+
+run_update_grub() {
+	restore_update_grub
+	"$update_grub"
+}
+
+# Usage info
+show_help() {
+# Convert tabs by 4 spaces in the here document.
+printf "Usage (using short options):
+
+$program_name [-bcdnosy] [{-k NUM [-a]} | -m] [-i APP]
+
+$program_name -f [-dsn] [-i APP]
+
+$program_name {-h | -v}
+
+Purge versioned kernel packages according to user's orders. Purging is
+not restricted to linux-image packages, but all versioned linux-*
+packages matching desired releases. Also purges such versioned
+kernel packages that have the respective linux-image package missing
+or marked for removal or purge, and packages that have just
+configuration files remaining. Does not purge such versioned kernel
+packages that have respective successfully installed linux-image
+package marked with \"hold\" unless chosen interactively with -c option.
+
+If usual purging fails, using -f option may help.
+
+Options:
+	-a, --auto-only Only purge kernels that have been marked as being
+					automatically installed.
+	-b, --clear-boot
+					Check /boot for kernels unknown to the package
+					management system, and if such files are found,
+					offer to remove them.
+	-c, --choose    Choose interactively which kernels to purge. Other
+					options determine which kernels are selected to
+					start with.
+	-d, --debug		Store the command trace and some other debug information
+					in a file whose name is given in the output.
+	-f, --fix       Use this, if the program fails otherwise. Try to fix
+					broken dependencies, which are typical in case a
+					filesystem has no space left. If needed, try to purge
+					given kernel(s) interactively by using different
+					methods to be able to purge kernels from a system
+					with broken dependencies and/or lack of free inodes.
+	-h, --help      Display this help and exit.
+	-i APP, -iAPP, --interface APP, --interface=APP
+					Choose application used for generating user interface, when
+					selecting kernels; see option -c.
+
+					Supported values for APP:
+
+					d or dialog (default)
+
+					w or whiptail (fallback)
+	-k NUM, -kNUM, --keep NUM, --keep=NUM
+					Keep NUM latest kernels that have earlier version
+					and same flavour than each kernel a meta-kernel
+					(such as linux-image-generic) depends on.
+	-m, --manual	Purge kernels that have been marked as being
+					manually installed.
+	-n, --no-legend Do not display legend in checklist used by -c and -f.
+	-o, --optimize  Run update-grub only once in normal operation.
+	-s, --simulate  Dry-run; do not actually remove packages. You may
+					run this as regular user. Note that in some cases
+					simulation is not complete since some actions may
+					depend on others being done for real beforehand.
+	-v, --version   Print version.
+	-y, --yes       Purge without user confirmation.
+
+Exit Status:
+	0:  Command finished successfully.
+	1:  Command-line is invalid.
+	2:  Command was run with wrong privileges.
+	other integer:  Command failed for some other reason.
+
+Report bugs at: <https://bugs.launchpad.net/linux-purge/+filebug>
+Use --debug option and attach the generated file.
+Launchpad home page: <https://launchpad.net/linux-purge>
+General help using GNU software: <http://www.gnu.org/gethelp/>\n" |
+sed 's/\t/    /g'
+}
+
+show_version() {
+printf "GNU $program_full_name $program_version
+Copyright (C) 2017 Jarno Ilari Suni
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.\n"
+}
+
+# Escape special characters.
+# reference: http://unix.stackexchange.com/a/209744/111181
+escape_regex() {
+	printf %s "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'
+}
+
+# Print megabytes availabe on /boot
+avail_boot() {
+	printf %s $(($(stat -f --format="%f*%S" /boot)/MB))
+}
+
+# Print megabytes allocated in /boot for release given in $1
+get_release_size_boot() {
+	printf %s $(((0$(stat --printf='+%b*%B' /boot/*-$1{,.*} \
+	2>/dev/null))/MB))
+}
+
+# Get the list of Linux releases that have depending kernel meta packages.
+# Note: Depends on Ubuntu's naming policy of kernel meta packages
+get_latest_releases() {
+	local meta_kernels=$(dpkg-query -W -f='${Package} ${db:Status-Abbrev}\n' |
+	 awk '/^linux-(.+-)?image-[^0-9]+(-(lts|hwe)-[^ ]+)? [ih]/{print $1}')
+	dpkg-query -Wf='${Depends}\n${Pre-Depends}\n' $meta_kernels |
+	 sed -r -e 's/ \([^)]*\)//g' -e 's/,? (\| )?/\n/g' |
+	  sed -nr 's/^linux-(.+-)?image-([0-9]+\..+).*/\2/p' | sort -Vu
+}
+
+# Get the list of Linux releases that have a linux image package marked
+# as being manually installed.
+get_manual_releases() {
+# apt-mark showmanual | sed -rn 's/linux-(signed-)?image-([0-9]+\.[^:]+).*/\2/p'
+# Instead of using apt-mark, use the following script to do the job faster;
+# LP: #1713219
+
+	auto_file='/var/lib/apt/extended_states'
+	eval $(apt-config shell auto_file Dir::State::extended_states/f)
+
+	dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' \
+	| awk -v file="$auto_file" '
+	/^.i  linux-(signed-)?image-[0-9]+\./ {
+		img[$2]=""
+	}
+	function print_release(pkg) {
+		match(pkg, /.*-image-/)
+		print substr(pkg, RLENGTH+1)
+	}
+	END{
+		while ((getline < file)>0) {
+			if ($1=="Package:") {
+				pkg=$2;
+				if (pkg in img) {
+					do getline < file; while ($1 != "Auto-Installed:")
+					if($2==0) print_release(pkg)
+					delete img[pkg]
+				}
+			}
+		}
+		close(file)
+		for (pkg in img) print_release(pkg)
+	}' | sort -Vu
+}
+
+get_hold_releases() {
+	dpkg-query -W -f='${Status} ${Package}\n' |
+	 sed -nr 's/hold ok installed linux-image-([0-9]+\..+)/\1/p'
+}
+
+get_set_complement() {
+	comm -23 <(sort -u <(printf %s "$1")) <(sort -u <(printf %s "$2")) | sort -V
+}
+
+# Delete extra initrd.img backups (LP: #1515513)
+remove_extra_initrds() {
+	# First remove possible leftover temporary mkinitramfs files
+	# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=814345
+	rm -rfv ${TMPDIR:-/var/tmp}/mkinitramfs-*
+
+	local old_dir=$(pwd) release= response=
+	cd /boot
+	local initrd_releases=$(ls initrd.img-* |
+	 sed -r -e '/.*\.old-dkms$/d' -e '/.*\.bak$/d' -e 's/initrd\.img-(.*)/\1/')
+	local vmlinuz_releases=$(ls vmlinuz-* | sed -nr -e 's#\.efi\.signed$##' \
+	-e 's#^vmlinuz-(.*)#\1#p')
+	local extra_initrds=$(for release in \
+	$(get_set_complement "$initrd_releases" "$vmlinuz_releases"); do
+	 echo initrd.img-${release}
+	done)
+	[[ $extra_initrds ]] && {
+		[[ $yes ]] && note "Removing extra initrd.img files at /boot" || {
+			printf '\nRemove the extra initrd.img file(s)
+%s\nat /boot? [Y/n] : ' "$extra_initrds"
+			read -r response && [[ ${response,,} =~ ^(y|$) ]] ;} &&
+		rm -v $extra_initrds
+	}
+	local initrd_backup_releases=$(ls initrd.img-*.old-dkms initrd.img-*.bak 2>/dev/null |
+	 sed -r 's/initrd\.img-(.*)\.(old-dkms|bak)$/\1/')
+	local extra_backups=$(for release in \
+	$(get_set_complement "$initrd_backup_releases" "$initrd_releases"); do
+	 echo initrd.img-${release}.*
+	done)
+
+	[[ $extra_backups ]] && {
+		[[ $yes ]] && note "Removing extra initrd.img backups at /boot" || {
+			printf '\nRemove the extra initrd.img backup file(s)
+%s\nat /boot? [Y/n] : ' "$extra_backups"
+			read -r response && [[ ${response,,} =~ ^(y|$) ]] ;} &&
+		rm -v $extra_backups
+	}
+
+	cd "$old_dir"
+}
+
+# Handle possible kernel files unknown to the package management system.
+# http://askubuntu.com/a/779077/21005
+clear_boot() {
+	local ReleasesKnownToDpkg=$(dpkg-query -W -f='${Package}\n' |
+	sed -nr "s/linux-image-([0-9]+\..+)/\1/p")
+	local ReleasesOnBoot=$(ls /boot/vmlinuz-* |
+	 sed -nr -e 's#\.efi\.signed$##' -e 's#/boot/vmlinuz-([0-9]+\..+)#\1#p' |
+	  { grep -vFx "$current" || [[ $? -eq 1 ]]; })
+	[[ $unknown_current ]] && note 'Not going to remove current kernel.'
+	local UnknownReleases=$(get_set_complement "$ReleasesOnBoot" \
+	 "$ReleasesKnownToDpkg")
+	[[ $UnknownReleases ]] && {
+		[[ $yes ]] && note "Removing files unknown to package management:" || {
+			printf 'There are some kernel files unknown to package management system in /boot:
+%s\nContinue to removing the files and also respective files elsewhere in system? [Y/n] : ' \
+"$(ls /boot | grep -f <(printf %s "$UnknownReleases"))"
+			read -r response &&
+			[[ ${response,,} =~ ^(y|$) ]] ;} && {
+				# restrict removing to these directories:
+				local release version flavour regex
+				local -r rdirs='^/(boot|lib|usr|var)/'
+				for release in $UnknownReleases; do
+					version=$(printf %s "$release" | cut -d- -f1,2)
+					flavour=$(printf %s "$release" | cut -s -d- -f3-)
+					# check, if also files without the flavour part can be
+					# removed
+					dpkg-query -W -f='${Package}\n' |
+					awk '(match($0,"-'"$(escape_regex "$version" |
+					 sed 's/\\/\\\\/g')"'-.*") &&
+					  substr($0,RSTART,RLENGTH)!=r){exit 1}' r=$release &&
+					  regex="-$(escape_regex "$version")(-$(escape_regex \
+					   "$flavour"))?$" ||
+					   regex="-$(escape_regex "$release")$"
+					# You could run updatedb here, but suppose it was run after
+					# the system has been installed already.
+					if [[ $simulate ]]; then
+						locate -be0 --regex -- "$regex" | grep -Ez -- "$rdirs" |
+						 xargs -0 $([[ $yes ]] || printf %s '-p') \
+						  printf "Would remove %s\n"
+					else
+						[[ $yes ]] && note "Removing files matching extended \
+regular expression
+$rdirs.*$regex" || note "Answer y to remove the files."
+						locate -be0 --regex -- "$regex" | grep -Ez -- "$rdirs" |
+						 xargs -0 $([[ $yes ]] || printf %s '-p') rm -rf
+					fi
+				done
+				[[ $update_grub ]] && $update_grub
+			}
+	}
+	:
+}
+
+# Get kernels to purge interactively
+# $1 is space separated list of tag string, item string and status string
+# entries. (See manual page of whiptail or dialog for more information.)
+# Exits with 0 in success, 1 in case of cancel, other value in case of possible
+# error.
+getReleasesToPurge() {
+	eval $(resize)
+	local -r title='Choose Which Kernels to Purge'
+	local -r height=$(($(tput lines)-6))
+	[[ $(tput cols) -lt $width ]] && error "$w_error"
+	local -r legend_text="Legend of Content On Right:
+* a plus sign (+), if the kernel is needed for updates
+* letter H, if the kernel is marked for hold
+* letter M, if the kernel is manually installed
+* the size of the kernel within /boot in megabytes
+Hint: Space bar toggles item's selection."
+	local -r infotext="Booted kernel: $current \
+($(get_release_size_boot $current) MB)
+Free space on /boot: $(avail_boot) MB$([[ $boot != '/boot' ]] &&
+	printf ' (mounted at %s)' "$boot")
+$([[ $legend ]] && printf %s "$legend_text")"
+	local -r infolines=$((1+$(printf %s "$infotext" | wc -l)))
+	local -r listheight=$((height-infolines-6))
+	[[ $listheight -lt 1 ]] && error "$h_error"
+	if [[ $interface = d ]]; then
+		export DIALOG_OK=0 DIALOG_CANCEL=1 DIALOG_ESC=10 DIALOG_ERROR=11
+		dialog --title "$title" --stdout --separate-output \
+		--backtitle "$program_full_name" --cr-wrap --column-separator $cs \
+		--checklist "$infotext" $height $width $listheight $1 ||
+		case $? in
+			$DIALOG_ESC|$DIALOG_CANCEL) clear >/dev/tty; exit 1 ;;
+			*) exit 2
+		esac
+		clear >/dev/tty
+	else
+		whiptail --title "$title" --separate-output \
+		--backtitle "$program_full_name" \
+		--checklist "$infotext" $height $width $listheight \
+		 $1 2>&1 >/dev/tty
+	fi
+}
+
+# Get kernel to purge interactively.
+# $1 is space separated list of kernel versions.
+# Exits with 0 in success, 1 in case of cancel, other value in case of possible
+# error.
+getVersionToPurge() {
+	eval $(resize)
+	local -r height=$(($(tput lines)-6))
+	[[ $(tput cols) -lt $width ]] && error "$w_error"
+	local -r title='Choose Which Linux Kernel to Purge'
+	local -r infotext='The program purges the chosen kernel in
+a special way due to lack of free inodes.'
+	local -r infolines=$((1+$(printf %s "$infotext" | wc -l)))
+	local -r listheight=$((height-infolines-6))
+	[[ $listheight -lt 1 ]] && error "$h_error"
+	if [[ $interface = d ]]; then
+		export DIALOG_OK=0 DIALOG_CANCEL=1 DIALOG_ESC=10 DIALOG_ERROR=11
+		dialog --title "$title" --backtitle "$program_full_name" \
+		--cr-wrap --no-items --stdout --menu "$infotext" $height $width \
+		 $listheight $1 ||
+		case $? in
+			$DIALOG_ESC|$DIALOG_CANCEL) clear >/dev/tty; exit 1 ;;
+			*) exit 2
+		esac
+		clear >/dev/tty
+	else
+		whiptail --title "$title" --backtitle "$program_full_name" \
+		--noitem --menu "$infotext" $height $width $listheight \
+		 $(for i in $1; do printf '%s 1 ' "$i"; done) 2>&1 >/dev/tty
+	fi
+}
+
+free_some_inodes() {
+	local varmp=$(stat --format="%m" /var)
+	local usrmp=$(stat --format="%m"  /usr/src)
+	[[ $varmp != $usrmp ]] &&
+	 error "Too few inodes on the filesystem mounted at $varmp." 3
+	# Try freeing some inodes by removing some files from /usr/src.
+	# Prompt for one kernel to remove, if there are many to choose from.
+	local HeaderVersions=$(dpkg-query -W -f='${Status} ${Package}\n' |
+	sed -rn "s/^[^ ]+ ok installed linux-headers-([0-9.]+(-[^-]+)?)$/\1/p" |
+	 sort -V)
+	HeaderVersions=$(get_set_complement "$HeaderVersions" \
+	"$(printf '%s\n%s\n%s' \
+	 "$(get_latest_releases | cut -d'-' -f1,2)" \
+	 "$(printf %s "$current" | cut -d'-' -f1,2)" \
+	 "$(dpkg-query -W -f='${Status} ${Package}\n' |
+	   sed -nr 's/hold ok installed linux-image-([0-9.]+(-[^-]+)?).*/\1/p')")")
+	# Restrict to versions that have related linux packages "ok".
+	local version okVersions=
+	for version in $HeaderVersions; do
+		[[ $(dpkg-query -W -f='${Status} ${Package}\n' |
+		awk '$4 ~ /linux-.+-'"$(escape_regex "$version")"'(-.*)?$/{
+			if($2!="ok"){e=1;exit}
+		}END{print e}') ]] || okVersions+="$version "
+	done
+	okVersions=${okVersions%% }
+	[[ $okVersions ]] || error "No suitable version to purge." 3
+	[[ $(printf %s "$okVersions" | wc -w) == 1 ]] && version=$okVersions ||
+	 version=$(getVersionToPurge "$okVersions") || exit 3
+
+	local dir
+	for dir in /usr/src/linux-headers-${version}/ \
+	 /usr/src/linux-headers-${version}-*/; do
+		note "Removing $dir"
+		[[ $simulate ]] || rm -rf "$dir"
+	done
+	note "Removing matching initrd image(s). (LP: #1678187)"
+	[[ $simulate ]] || rm -fv /boot/initrd.img-"${version}"-*
+	note "Purging the kernel by dpkg ..."
+	dpkg --purge --abort-after=1 $simulate \
+	$(dpkg-query -W -f='${Status} ${Package}\n' |
+	 awk '/^[^ ]+ ok installed linux-.+-'"$(escape_regex "${version}")"\
+'(-.*)?$/{print $4}') || {
+		error "Purging by dpkg failed; dpkg error $?." 3
+		# NOTE: some packages may have selection state
+		# "purge" after this.
+	}
+	note "Purging finished successfully."
+}
+
+purge_manually() {
+	# Restrict to releases that have related linux packages "ok".
+	local release version flavour okReleases=
+	InstalledReleases=$(dpkg-query -W -f='${Status} ${Package}\n' \
+	| sed -nr "s/^[^ ]+ ok installed linux-image-([0-9]+\..+)/\1/p" \
+	| sort -V)
+	for release in $(get_set_complement "$InstalledReleases" \
+	"$(printf '%s\n%s' "$(get_latest_releases)" "$current")"); do
+		version=$(printf %s "$release" | cut -d- -f1,2)
+		flavour=$(printf %s "$release" | cut -s -d- -f3-)
+		[[ $(dpkg-query -W -f='${Status} ${Package}\n' |
+		awk '$4 ~ /linux-.+-'"$(escape_regex "$version")"'(-'"$(\
+		 escape_regex "$flavour")"')?$/{if($2!="ok"){e=1;exit}
+		}END{print e}') ]] || okReleases+="$release "
+	done
+
+	okReleases=${okReleases%% }
+
+	[[ $okReleases ]] || error "Could not find a safe kernel to purge." 3
+
+	# Choose kernel(s) interactively.
+	local ReleasesToPurge
+	[[ $(printf %s "$okReleases" | wc -w) == 1 ]] &&
+	 ReleasesToPurge=$okReleases || {
+		local ManualReleases=$(get_manual_releases)
+		local HoldReleases=$(get_hold_releases)
+		local ReleasesToPurge=$(getReleasesToPurge "$(for release in $okReleases
+		 do
+			mark=
+			printf %s "$HoldReleases" | grep -Fxq -e "$release" &&
+			 mark+=H || mark+='_'
+			printf %s "$ManualReleases" | grep -Fxq -e "$release" &&
+			 mark+=M || mark+='_'
+			printf '%s %s%s%s %s ' "$release" "$mark" "$cs" \
+			 $(get_release_size_boot $release) off
+		 done)") || exit 3
+		[[ $ReleasesToPurge ]] ||
+			error 'You should have chosen at least one release.' 3
+	}
+	for release in $ReleasesToPurge; do
+		note "Removing matching initrd image. (LP: #1678187)"
+		[[ $simulate ]] || rm -fv /boot/initrd.img-"${release}"{,.*}
+		note "Purging the kernel by dpkg ..."
+		dpkg --purge --abort-after=1 $simulate \
+			$(dpkg-query -W -f='${Package}\n' |
+			awk '/^linux-.+-'"$(escape_regex "$release")"'$/') ||
+				error "Purging by dpkg failed; dpkg error $?." 3
+				# NOTE: some packages may have selection state "purge".
+		[[ $simulate ]] ||
+		 dpkg --purge \
+		  $(dpkg-query -W -f='${Package}\n' |
+		  awk '/^linux-.+-'"$(escape_regex "$(printf %s "$release" |
+		   cut -d- -f1,2)")"'$/') 2>/dev/null || true
+		# If purging linux-.+-<version> fails
+		# due to linux-.+-<version>-<flavour> being
+		# installed and not going to be purged, that is ok.
+	done
+	if [[ $simulate ]]; then
+		note "Did not try to purge non-flavour versioned kernel packages in \
+simulation mode."
+	fi
+}
+
+run_fix() {
+	[[ $simulate ]] || remove_extra_initrds
+	if [[ $(stat -f --format="%d" /var) -lt 10 ]]; then
+		# /var is about to run out of inodes. dpkg and apt-get
+		# may not be able to operate.
+		# (10 is an estimate of the number of needed free inodes.)
+		free_some_inodes
+	fi
+
+	while ! { note 'Fixing possible broken packages...'; \
+	 apt-get -f $simulate install; }; do
+		[[ $simulate ]] || remove_extra_initrds
+		printf '\n'
+		note "Could not fix broken packages. Lines above may give you clue \
+why this happened. Select action accordingly below:"
+		while true; do
+			printf '%s' "\
+1) Purge some kernel(s) to free space and then retry
+2) Run 'dpkg --configure -a' and retry. (Choose this, if recommended above.)
+3) Quit
+#? ";
+			read -r answer
+			case $answer in
+			 1) purge_manually ;;
+			 2) dpkg --configure -a $simulate \
+				|| error "'dpkg --configure -a' failed and returned $?" 3 ;;
+			 3) error 'Could not fix the problem.' 3 ;;
+			 *) printf '%s\n' 'Invalid selection'; continue ;;
+			esac
+			break # break while true
+		done
+
+		[[ $simulate ]] && {
+			note 'Cannot do more in simulation mode.'
+			exit 0
+		}
+	done
+
+	[[ $simulate ]] || note "Fixing finished successfully.
+HINT: You may run the command again without --fix option to possibly purge \
+more versioned kernel packages."
+	:
+}
+
+purge_normally() {
+	if status=$(dpkg-query -W -f='${Status}\n' "linux-image-$current" 2>/dev/null); then
+		grep -qE "^(install|hold) ok installed" <<<"$status" ||
+		error "Current kernel package linux-image-$current is not successfully \
+installed or it is marked for removal." 3
+		# current kernel is successfully installed and wanted as such
+	else
+		warn "Current kernel $current is unknown to dpkg."
+		unknown_current=1
+	fi
+
+	# Create list of unsuccessfully/partially installed packages.
+	Pkgs=$(dpkg-query -W -f='${Package} ${Status}\n' 'linux-*' |
+	 awk '$3!="ok" || ($4!="installed" && $4!="not-installed" && $4!="config-files")
+	 ')
+	if [[ $Pkgs ]]; then
+		error "The following kernel packages have invalid state; each package name \
+is followed by its state:
+$Pkgs
+
+(Refer to the documentation of dpkg for explanation of the package states.)
+
+Hint: Run this command with --fix option.
+Hint: If a package flag is 'reinst-required' (instead of 'ok') for some package, \
+you may have to reinstall the package by 'apt-get install --reinstall'." 3
+	fi
+
+	# get list of succesfully installed releses with status install or hold
+	Releases=$(dpkg-query -W -f='${Status} ${Package}\n' |
+	sed -nr "s/^(install|hold) ok installed linux-image-([0-9]+\..+)/\2/p" |
+	sort -V)
+
+	[[ $clear_boot ]] && clear_boot
+
+	if [[ -z $keep ]]; then
+		[[ $manual ]] && {
+			# do not keep manually installed releases unless they are marked
+			# with "hold".
+			ManualReleases=$(get_manual_releases)
+			HoldReleases=$(get_hold_releases)
+			ReleasesToKeep=$(sort -Vu <(printf '%s\n%s\n%s' "$current" \
+			"$(get_set_complement "$Releases" "$ManualReleases")" "$HoldReleases"))
+		} ||
+		ReleasesToKeep=$Releases
+	else
+		ReleasesToKeep=
+		LatestReleases=$(get_latest_releases)
+		for release in $LatestReleases; do
+			[[ $ReleasesToKeep ]] && ReleasesToKeep+=$'\n'
+			ReleasesToKeep+=$(printf %s "$Releases" |
+			grep -e '-'$(printf %s "$release" | cut -s -d- -f3-)'$' |
+			 grep -Fx -B $n -m 1 $release)
+		done
+
+		# Keep manually installed kernels, if wanted, and kernels marked for
+		# hold and the currently booted kernel (though it may be included already).
+		[[ $auto_only ]] && ManualReleases=$(get_manual_releases)
+		HoldReleases=$(get_hold_releases)
+		ReleasesToKeep=$(sort -Vu <(printf '%s\n%s\n%s\n%s' \
+		"$ReleasesToKeep" "$current" "$([[ $auto_only ]] && printf %s \
+		 "$ManualReleases")" "$HoldReleases"))
+	fi
+
+	if [[ $choose ]]; then
+		# Choose kernels interactively.
+
+		# create certain lists, if not done already
+		[[ ${LatestReleases+x} ]] || LatestReleases=$(get_latest_releases)
+		[[ ${ManualReleases+x} ]] || ManualReleases=$(get_manual_releases)
+		[[ ${HoldReleases+x} ]] || HoldReleases=$(get_hold_releases)
+
+		Items="$(for release in $Releases; do
+			if [[ $release != $current ]]; then
+				mark=
+				printf %s "$LatestReleases" | grep -Fxq -e "$release" &&
+				 mark+='+' || mark+='_'
+				printf %s "$HoldReleases" | grep -Fxq -e "$release" && mark+=H ||
+				 mark+='_'
+				printf %s "$ManualReleases" | grep -Fxq -e "$release" && mark+=M ||
+				 mark+='_'
+				printf %s "$ReleasesToKeep" | grep -Fxq -e "$release" &&
+				 status=off || status=on
+				printf '%s %s%s%s %s ' "$release" "$mark" "$cs" \
+				 $(get_release_size_boot $release) $status
+			fi
+		done)"
+		if [[ -z $Items ]]; then
+			note "No kernels to choose from. Just clear the junk..."
+			ReleasesToPurge=
+		else
+			ReleasesToPurge=$(getReleasesToPurge "$Items") || { err_code=$?;
+				[[ $err_code -eq 1 ]] && exit 0 || [[ $err_code -eq 255 ]] &&
+				 error 'Whiptail error, or user pressed escape' 255 ||
+				  error 'Dialog error' 4; }
+		fi
+		if [[ $ReleasesToPurge ]]; then
+			ReleasesToKeep=$(get_set_complement "$Releases" "$ReleasesToPurge")
+		else
+			ReleasesToKeep="$Releases"
+		fi
+	fi
+
+	KeepRegex=
+	for release in $ReleasesToKeep; do
+		[[ $KeepRegex ]] && KeepRegex+=$'\n'
+		KeepRegex+='-'$(escape_regex "$release" |
+		 sed -nr 's/^([^-]+(-[^-]+)?)(-.*)?/\1(\3)?/p')'$'
+	done
+
+	PkgsToPurge=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' |
+	 awk '/^.[^n]  linux-.+-[0-9]+\.[0-9]+\./{print $2}' | {
+	  grep -Evf <(printf '%s' "$KeepRegex") || [[ $? -eq 1 ]]; })
+
+	if [[ $PkgsToPurge ]]; then
+
+		[[ $simulate ]] || {
+			remove_extra_initrds
+			cmd=$(fuser -v "$lockfile" 2>&1 | awk 'NR == 2{print $5}')
+			[[ $cmd ]] && {
+				note "Waiting for $cmd to finish..."
+				while fuser "$lockfile" &>/dev/null; do sleep 1; done
+			}
+
+			# disable update-grub; restore after purging has finished.
+			# This will speed up purging somewhat.
+			[[ $optimize && $update_grub ]] && chmod -x "$update_grub" && {
+			  note "Made '$update_grub' non-executable temporarily to speed up purging."
+			  update_grub_disabled=1
+			}
+		}
+		apt-get $simulate $yes purge $PkgsToPurge || {
+			err_code=$?
+			[[ err_code -eq 1 ]] && exit 0 # User aborted
+			[[ $update_grub_disabled ]] && run_update_grub
+			error "Purging by apt-get failed; apt-get error $err_code.
+Hint: try running the command with --fix option." 3
+		}
+		[[ $update_grub_disabled ]] && run_update_grub
+	fi
+
+	[[ $simulate ]] || remove_extra_initrds
+}
+
+
+# Main program
+
+# Handle command line options
+
+env -u GETOPT_COMPATIBLE getopt --test >/dev/null ||
+[[ $? -eq 4 ]] || error '`getopt --test` failed in this environment.' 3
+# This should not happen with util-linux's getopt.
+params=$(env -u GETOPT_COMPATIBLE getopt -o abcdfhi:k:mnosvy -l auto-only,\
+clear-boot,choose,debug,fix,help,interface:,keep:,manual,no-legend,optimize,\
+simulate,version,yes --name "[$program_name] ERROR" -- "$@") || {
+	err_code=$?
+	case $err_code in
+		1) error_called=1; exit 1 ;;
+		*) error "getopt exited with error code $err_code" 3
+	esac
+}
+
+eval set -- "$params"
+while :; do
+	case ${1-} in
+		-a|--auto-only)
+			auto_only=1
+			;;
+		-b|--clear-boot)
+			clear_boot=1
+			;;
+		-c|--choose)
+			choose=1
+			;;
+		-d|--debug)
+			debug=1
+			;;
+		 -f|--fix)
+			fix=1
+			;;
+		-h|--help)
+			show_help
+			exit
+			;;
+		-i|--interface)
+			case $2 in
+			 w|whiptail) interface=w ;;
+			 d|dialog) interface=d ;;
+			 *) error "'$2' is invalid interface ID." 1
+			esac
+			shift 2
+			continue
+			;;
+		-k|--keep)
+			keep=1
+			n=$2
+			shift 2
+			continue
+			;;
+		-m|--manual)
+			manual=1
+			;;
+		-n|--no-legend)
+			legend=
+			;;
+		-o|--optimize)
+			optimize=1
+			;;
+		-s|--simulate)
+			simulate='--simulate'
+			;;
+		-v|--version)
+			show_version
+			exit
+			;;
+		-y|--yes)
+			yes='-y'
+			;;
+		--) # End of all options.
+			shift
+			break
+	esac
+
+	shift
+done
+
+if [[ $keep ]]; then
+	[[ "$n" =~ ^[0-9]+$ ]] ||
+	error "'$n' is invalid number of older kernels to keep." 1
+fi
+# $n is valid number, if needed
+
+[[ $auto_only && ! $keep ]] || [[ $keep && $manual ]] ||
+ [[ $fix && ($keep || $manual || $choose || $yes || $optimize) ]] &&
+  error "Invalid combination of options. Hint:
+  $program_name -h" 1
+
+[[ $# -eq 0 ]] || error "No argument \"$1\" allowed." 1
+
+# Ensure superuser privileges, if required
+[[ -z $simulate && $EUID -ne 0 ]] &&
+error "Must be run as root, if not in simulation mode. Hint:
+  $program_name -h" 2
+
+# make sure update-grub is executable, if needed
+[[ $simulate ]] || {
+	update_grub=$(command -v update-grub || true)
+	[[ $update_grub ]] && chmod +x "$update_grub"
+}
+
+[[ $interface = d ]] && {
+	hash dialog 2>/dev/null || {
+		interface=w
+		note 'Using whiptail, if needed, because dialog is not installed.'
+	}
+}
+
+[[ $debug ]] && {
+	debug_file=$(mktemp /tmp/linux-purge.debug_XXX)
+	{
+		printf '## linux-purge version: %s\n' $program_version
+		printf '## options: %s\n' "$params"
+		printf '## OS: %s\n' "$(lsb_release -d | cut -d$'\t' -f2)"
+		printf '## awk version:\n'
+		awk -W version
+		printf '## linux packages:\n'
+		dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' linux-'*'
+		printf '\n## trace and output:\n'
+	} >$debug_file 2>&1
+	chmod +r $debug_file
+	set -x
+}
+
+{
+if [[ $fix ]]; then
+	run_fix
+else
+	purge_normally
+fi
+}> >(tee --append $debug_file) 2> >(tee --append $debug_file >&2)
+
+set +x
+[[ $debug ]] || note "If you find this software useful, please donate. You can \
+find the details at the Launchpad page: <https://launchpad.net/linux-purge>"
