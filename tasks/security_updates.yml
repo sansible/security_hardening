@@ -39,15 +39,19 @@
     name: /var/log/apt-security-updates
 
 - block:
-    - name: Reboot System
+    - name: Reboot box if kernel/libs updated and requested by the system
       become: yes
-      command: reboot
-      changed_when: no
+      command: /sbin/shutdown -r now
+      args:
+        removes: /var/run/reboot-required
+      async: 300
+      poll: 0
+      ignore_errors: true
       when: "ansible_virtualization_type != 'docker'"
 
-    - name: Wait For System to Come Up
-      pause:
-        minutes: 2
+    - name: Wait for system to become reachable again
+      wait_for_connection:
+        timeout: 300
       when: "ansible_virtualization_type != 'docker'"
 
     - name: Copy linux-purge
