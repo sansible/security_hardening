@@ -51,6 +51,7 @@
 
     - name: Wait for system to become reachable again
       wait_for_connection:
+        delay: 20
         timeout: 300
       when: "ansible_virtualization_type != 'docker'"
 
