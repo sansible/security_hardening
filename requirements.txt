@@ -1,2 +1,2 @@
 docker-py
-molecule
+molecule==2.17.0
