@@ -68,4 +68,8 @@
       become: yes
       command: /usr/bin/linux-purge -k 0 -y
       changed_when: no
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      when: "ansible_virtualization_type != 'docker'"
+
   when: sansible_security_hardening_purge_old_kernels
