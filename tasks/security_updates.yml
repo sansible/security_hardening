@@ -41,7 +41,7 @@
 - block:
     - name: Reboot box if kernel/libs updated and requested by the system
       become: yes
-      command: /sbin/shutdown -r now
+      command: sleep 2 && /sbin/shutdown -r now
       args:
         removes: /var/run/reboot-required
       async: 300
