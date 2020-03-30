@@ -8,6 +8,8 @@ platforms:
     image: ubuntu:trusty
   - name: security_hardening-xenial
     image: ubuntu:xenial
+  - name: security_hardening-bionic
+    image: ubuntu:bionic
 
 provisioner:
   name: ansible
