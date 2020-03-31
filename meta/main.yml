@@ -3,14 +3,15 @@
 dependencies: []
 
 galaxy_info:
+  author: sansible
   description: Security hardening installation
   license: MIT
-  min_ansible_version: 2.3
+  min_ansible_version: 2.7
   platforms:
     - name: Ubuntu
       versions:
         - trusty
         - xenial
         - bionic
-  categories:
+  galaxy_tags:
     - development

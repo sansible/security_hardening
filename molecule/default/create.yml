@@ -40,7 +40,7 @@
         image: "molecule_local/{{ item.image }}"
         state: started
         recreate: false
-        log_driver: "{{ 'none' if ( ansible_version.full | version_compare('2.4',  '>=' )) else 'json-file' }}"
+        log_driver: "{{ 'none' if ( ansible_version.full is version('2.4',  '>=' )) else 'json-file' }}"
         command: "{{ item.command | default('bash -c \"while true; do sleep 10000; done\"') }}"
         privileged: "{{ item.privileged | default(omit) }}"
         volumes: "{{ item.volumes | default(omit) }}"

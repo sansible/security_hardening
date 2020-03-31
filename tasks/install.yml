@@ -8,6 +8,7 @@
 
 - name: Sysctl updates
   include: sysctl.yml
+  when: "ansible_virtualization_type != 'docker'"
 
 - name: Configure Root Access
   include: root_access.yml
